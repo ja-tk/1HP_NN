@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 
 from data_stuff.transforms import NormalizeTransform
 from networks.unet import UNet
+from networks.unet3d import UNet3d
 
 # mpl.rcParams.update({'figure.max_open_warning': 0})
 # plt.rcParams['figure.figsize'] = [16, 5]
@@ -53,7 +54,7 @@ class DataToVisualize:
         elif self.name == "SDF":
             self.name = "SDF-transformed position in [-]"
     
-def visualizations(model: UNet, dataloader: DataLoader, device: str, amount_datapoints_to_visu: int = inf, plot_path: str = "default", pic_format: str = "png"):
+def visualizations(model: UNet | UNet3d, dataloader: DataLoader, device: str, amount_datapoints_to_visu: int = inf, plot_path: str = "default", pic_format: str = "png"):
     print("Visualizing...", end="\r")
 
     if amount_datapoints_to_visu > len(dataloader.dataset):
@@ -98,6 +99,22 @@ def prepare_data_to_plot(x: torch.Tensor, y: torch.Tensor, y_out:torch.Tensor, i
     temp_max = max(y.max(), y_out.max())
     temp_min = min(y.min(), y_out.min())
     extent_highs = (np.array(info["CellsSize"][:2]) * x.shape[-2:])
+
+    if y.dim() ==3:
+        z_position=get_hp_z_position_from_info(x, info)
+
+        y=reduce_z_dimension(y, z_position)
+        y_out=reduce_z_dimension(y_out, z_position)
+        x=reduce_z_dimension(x, z_position)
+       
+        # 2d data comes in transposed (for xy) , 3d data not (look at ReduceTo2DTransform)
+        y=y.T
+        y_out=y_out.T
+        x=x.transpose_(1,2)
+
+        extent_highs = (np.array(info["CellsSize"][:2]) * x.shape[-2:])
+        extent_highs[1] /= 4
+    
 
     dict_to_plot = {
         "t_true": DataToVisualize(y, "Label: Temperature in [°C]", extent_highs, {"vmax": temp_max, "vmin": temp_min}),
@@ -199,8 +216,13 @@ def plot_avg_error_cellwise(dataloader, summed_error_pic, settings_pic: dict):
     # plot avg error cellwise AND return time measurements for inference
 
     info = dataloader.dataset.dataset.info
-    extent_highs = (np.array(info["CellsSize"][:2]) * dataloader.dataset[0][0][0].shape)
+    extent_highs = (np.array(info["CellsSize"][:2]) * (dataloader.dataset[0][0][0].shape)[-2:])
     extent = (0,int(extent_highs[0]),int(extent_highs[1]),0)
+
+    if summed_error_pic.dim()==3:
+        z_position=get_hp_z_position(summed_error_pic)
+        summed_error_pic=reduce_z_dimension(summed_error_pic, z_position)
+        summed_error_pic=summed_error_pic.T
 
     plt.figure()
     plt.imshow(summed_error_pic.T, cmap="RdBu_r", extent=extent)
@@ -217,3 +239,32 @@ def _aligned_colorbar(*args, **kwargs):
     cax = make_axes_locatable(plt.gca()).append_axes(
         "right", size=0.3, pad=0.05)
     plt.colorbar(*args, cax=cax, **kwargs)
+
+def get_hp_z_position(tensor: torch.tensor): 
+    assert tensor.dim()==3 , f"Tensor has wrong dimension: {tensor.dim()} instead of 3"
+    
+    loc_hp = np.array(np.where(tensor == tensor.max())).squeeze()
+    z_position=loc_hp[-1]
+    return z_position
+
+def get_hp_z_position_from_info(tensor: torch.tensor, info: dict):     
+    assert tensor.dim()==4 , f"Tensor has wrong dimension: {tensor.dim()} instead of 4"
+    try:
+        idx = info["Inputs"]["Material ID"]["index"]
+    except:
+        idx = info["Inputs"]["SDF"]["index"]
+    loc_hp = np.array(np.where(tensor[idx] == tensor[idx].max())).squeeze()
+    
+    z_position=loc_hp[-1]
+    return z_position
+
+def reduce_z_dimension(tensor: torch.tensor, z_position: int):
+    assert z_position <= tensor.shape[2], "z is larger than data dimension 2"
+    if tensor.dim()==3:
+        tensor=tensor[:,:,z_position]
+    else:
+        assert tensor.dim()==4 , f"Tensor has wrong dimension: {tensor.dim()} instead of 4"
+        tensor=tensor[:,:,:,z_position]
+    tensor.squeeze(-1)
+    return tensor
+
