@@ -103,9 +103,9 @@ def prepare_data_to_plot(x: torch.Tensor, y: torch.Tensor, y_out:torch.Tensor, i
     if y.dim() ==3:
         z_position=get_hp_z_position_from_info(x, info)
 
-        y=reduce_z_dimension(y, z_position)
-        y_out=reduce_z_dimension(y_out, z_position)
-        x=reduce_z_dimension(x, z_position)
+        y=remove_z_dimension(y, z_position)
+        y_out=remove_z_dimension(y_out, z_position)
+        x=remove_z_dimension(x, z_position)
        
         # 2d data comes in transposed (for xy) , 3d data not (look at ReduceTo2DTransform)
         y=y.T
@@ -221,7 +221,7 @@ def plot_avg_error_cellwise(dataloader, summed_error_pic, settings_pic: dict):
 
     if summed_error_pic.dim()==3:
         z_position=get_hp_z_position(summed_error_pic)
-        summed_error_pic=reduce_z_dimension(summed_error_pic, z_position)
+        summed_error_pic=remove_z_dimension(summed_error_pic, z_position)
         summed_error_pic=summed_error_pic.T
 
     plt.figure()
@@ -258,7 +258,7 @@ def get_hp_z_position_from_info(tensor: torch.tensor, info: dict):
     z_position=loc_hp[-1]
     return z_position
 
-def reduce_z_dimension(tensor: torch.tensor, z_position: int):
+def remove_z_dimension(tensor: torch.tensor, z_position: int):
     assert z_position <= tensor.shape[2], "z is larger than data dimension 2"
     if tensor.dim()==3:
         tensor=tensor[:,:,z_position]
