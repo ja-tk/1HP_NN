@@ -71,15 +71,26 @@ def visualizations(model: UNet | UNet3d, dataloader: DataLoader, device: str, am
         len_batch = inputs.shape[0]
         for datapoint_id in range(len_batch):
             name_pic = f"{plot_path}_{current_id}"
+            y_label="x [m]"
 
             x = torch.unsqueeze(inputs[datapoint_id].to(device), 0)
             y = labels[datapoint_id]
             y_out = model(x).to(device)
 
             x, y, y_out = reverse_norm_one_dp(x, y, y_out, norm)
-            dict_to_plot = prepare_data_to_plot(x, y, y_out, info)
 
-            plot_datafields(dict_to_plot, name_pic, settings_pic)
+            if y.dim()==3:
+                # visualization for xy
+                # 2d data comes in transposed (for xy) , 3d data not (look at ReduceTo2DTransform)
+                dict_to_plot=prepare_data_to_plot(x.transpose(1,3), y.transpose(0,2), y_out.transpose(0,2), info) # order (z,y,x)
+                name_pic = f"{plot_path}_{current_id}_xy"
+                plot_datafields(dict_to_plot, name_pic, settings_pic, y_label)
+                # visualization for zy
+                name_pic = f"{plot_path}_{current_id}_zy"
+                y_label="z [m]"
+
+            dict_to_plot = prepare_data_to_plot(x, y, y_out, info)
+            plot_datafields(dict_to_plot, name_pic, settings_pic, y_label)
             # plot_isolines(dict_to_plot, name_pic, settings_pic)
             # measure_len_width_1K_isoline(dict_to_plot)
 
@@ -90,7 +101,7 @@ def visualizations(model: UNet | UNet3d, dataloader: DataLoader, device: str, am
 def reverse_norm_one_dp(x: torch.Tensor, y: torch.Tensor, y_out:torch.Tensor, norm: NormalizeTransform):
     # reverse transform for plotting real values
     x = norm.reverse(x.detach().cpu().squeeze(0), "Inputs")
-    y = norm.reverse(y.detach().cpu(),"Labels")[0]
+    y = norm.reverse(y.detach().cpu(),"Labels")[0]#[0] wie squeeze(0): 1,64,256,64 -> 64,256,64
     y_out = norm.reverse(y_out.detach().cpu()[0],"Labels")[0]
     return x, y, y_out
 
@@ -98,22 +109,15 @@ def prepare_data_to_plot(x: torch.Tensor, y: torch.Tensor, y_out:torch.Tensor, i
     # prepare data of temperature true, temperature out, error, physical variables (inputs)
     temp_max = max(y.max(), y_out.max())
     temp_min = min(y.min(), y_out.min())
-    extent_highs = (np.array(info["CellsSize"][:2]) * x.shape[-2:])
 
     if y.dim() ==3:
-        z_position=get_hp_z_position_from_info(x, info)
+        position=get_hp_position_from_info(x, info)
 
-        y=remove_z_dimension(y, z_position)
-        y_out=remove_z_dimension(y_out, z_position)
-        x=remove_z_dimension(x, z_position)
-       
-        # 2d data comes in transposed (for xy) , 3d data not (look at ReduceTo2DTransform)
-        y=y.T
-        y_out=y_out.T
-        x=x.transpose_(1,2)
+        y=remove_dimension(y, position)
+        y_out=remove_dimension(y_out, position)
+        x=remove_dimension(x, position)
 
-        extent_highs = (np.array(info["CellsSize"][:2]) * x.shape[-2:])
-        extent_highs[1] /= 4
+    extent_highs = (np.array(info["CellsSize"][:2]) * x.shape[-2:])
     
 
     dict_to_plot = {
@@ -128,7 +132,7 @@ def prepare_data_to_plot(x: torch.Tensor, y: torch.Tensor, y_out:torch.Tensor, i
 
     return dict_to_plot
 
-def plot_datafields(data: Dict[str, DataToVisualize], name_pic: str, settings_pic: dict):
+def plot_datafields(data: Dict[str, DataToVisualize], name_pic: str, settings_pic: dict, y_label="x [m]"):
     # plot datafields (temperature true, temperature out, error, physical variables (inputs))
 
     num_subplots = len(data)
@@ -147,7 +151,7 @@ def plot_datafields(data: Dict[str, DataToVisualize], name_pic: str, settings_pi
         plt.imshow(datapoint.data.T, **datapoint.imshowargs)
         plt.gca().invert_yaxis()
 
-        plt.ylabel("x [m]")
+        plt.ylabel(y_label)
         _aligned_colorbar()
 
     plt.sca(axes[-1])
@@ -220,9 +224,9 @@ def plot_avg_error_cellwise(dataloader, summed_error_pic, settings_pic: dict):
     extent = (0,int(extent_highs[0]),int(extent_highs[1]),0)
 
     if summed_error_pic.dim()==3:
-        z_position=get_hp_z_position(summed_error_pic)
-        summed_error_pic=remove_z_dimension(summed_error_pic, z_position)
-        summed_error_pic=summed_error_pic.T
+        #transpose for xy
+        position=get_hp_position(summed_error_pic.transpose(0,2))
+        summed_error_pic=remove_dimension(summed_error_pic, position)
 
     plt.figure()
     plt.imshow(summed_error_pic.T, cmap="RdBu_r", extent=extent)
@@ -240,14 +244,14 @@ def _aligned_colorbar(*args, **kwargs):
         "right", size=0.3, pad=0.05)
     plt.colorbar(*args, cax=cax, **kwargs)
 
-def get_hp_z_position(tensor: torch.tensor): 
+def get_hp_position(tensor: torch.tensor): 
     assert tensor.dim()==3 , f"Tensor has wrong dimension: {tensor.dim()} instead of 3"
     
     loc_hp = np.array(np.where(tensor == tensor.max())).squeeze()
-    z_position=loc_hp[-1]
-    return z_position
+    position=loc_hp[0]
+    return position
 
-def get_hp_z_position_from_info(tensor: torch.tensor, info: dict):     
+def get_hp_position_from_info(tensor: torch.tensor, info: dict):     
     assert tensor.dim()==4 , f"Tensor has wrong dimension: {tensor.dim()} instead of 4"
     try:
         idx = info["Inputs"]["Material ID"]["index"]
@@ -255,16 +259,18 @@ def get_hp_z_position_from_info(tensor: torch.tensor, info: dict):
         idx = info["Inputs"]["SDF"]["index"]
     loc_hp = np.array(np.where(tensor[idx] == tensor[idx].max())).squeeze()
     
-    z_position=loc_hp[-1]
-    return z_position
+    position=loc_hp[0]
+    return position
 
-def remove_z_dimension(tensor: torch.tensor, z_position: int):
-    assert z_position <= tensor.shape[2], "z is larger than data dimension 2"
+def remove_dimension(tensor: torch.tensor, position: int):
     if tensor.dim()==3:
-        tensor=tensor[:,:,z_position]
+        assert position <= tensor.shape[0], "position is larger than data dimension 0"
+        tensor=tensor[position,:,:]
+        tensor.squeeze(0)
     else:
         assert tensor.dim()==4 , f"Tensor has wrong dimension: {tensor.dim()} instead of 4"
-        tensor=tensor[:,:,:,z_position]
-    tensor.squeeze(-1)
+        assert position <= tensor.shape[1], "position is larger than data dimension 1"
+        tensor=tensor[:,position,:,:]
+        tensor.squeeze(1)
     return tensor
 
