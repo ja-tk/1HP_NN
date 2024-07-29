@@ -9,6 +9,7 @@ from typing import Dict
 import matplotlib.pyplot as plt
 
 from networks.unet import UNet
+from networks.unet3d import UNet3d
 from processing.solver import Solver
 from data_stuff.utils import SettingsTraining
 
@@ -49,7 +50,7 @@ def measure_len_width_1K_isoline(data: Dict[str, "DataToVisualize"]):
     plt.close("all")
     return lengths, widths
 
-def measure_loss(model: UNet, dataloader: DataLoader, device: str, loss_func: modules.loss._Loss = MSELoss()):
+def measure_loss(model: UNet|UNet3d, dataloader: DataLoader, device: str, loss_func: modules.loss._Loss = MSELoss()):
 
     norm = dataloader.dataset.dataset.norm
     model.eval()
@@ -63,14 +64,14 @@ def measure_loss(model: UNet, dataloader: DataLoader, device: str, loss_func: mo
         y = y.to(device)
         y_pred = model(x).to(device)
         mse_loss += loss_func(y_pred, y).detach().item()
-        mae_loss = torch.mean(torch.abs(y_pred - y)).detach().item()
+        mae_loss += torch.mean(torch.abs(y_pred - y)).detach().item()
 
         y = torch.swapaxes(y, 0, 1)
         y_pred = torch.swapaxes(y_pred, 0, 1)
         y = norm.reverse(y.detach().cpu(),"Labels")
         y_pred = norm.reverse(y_pred.detach().cpu(),"Labels")
         mse_closs += loss_func(y_pred, y).detach().item()
-        mae_closs = torch.mean(torch.abs(y_pred - y)).detach().item()
+        mae_closs += torch.mean(torch.abs(y_pred - y)).detach().item()
         
     mse_loss /= len(dataloader)
     mse_closs /= len(dataloader)
