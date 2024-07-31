@@ -36,11 +36,10 @@ def init_data(settings: SettingsTraining, seed=1):
     datasets = random_split(dataset, get_splits(len(dataset), split_ratios), generator=generator)
     dataloaders = {}
     try:
-        dataloaders["train"] = DataLoader(datasets[0], batch_size=5, shuffle=True, num_workers=0)
-        dataloaders["val"] = DataLoader(datasets[1], batch_size=5, shuffle=True, num_workers=0)
+        dataloaders["train"] = DataLoader(datasets[0], batch_size=6, shuffle=True, num_workers=0)
+        dataloaders["val"] = DataLoader(datasets[1], batch_size=6, shuffle=True, num_workers=0)
     except: pass
-    dataloaders["test"] = DataLoader(datasets[2], batch_size=5, shuffle=True, num_workers=0)
-
+    dataloaders["test"] = DataLoader(datasets[2], batch_size=6, shuffle=True, num_workers=0)
     return dataset.input_channels, dataloaders
 
 
@@ -70,9 +69,11 @@ def run(settings: SettingsTraining):
         finetune = True if settings.case == "finetune" else False
         solver = Solver(model, dataloaders["train"], dataloaders["val"], loss_func=loss_fn, finetune=finetune)
         try:
-            solver.load_lr_schedule(settings.destination / "learning_rate_history.csv", settings.case_2hp)
+            auto_lr_scheduler = True
+            if not auto_lr_scheduler:
+                solver.load_lr_schedule(settings.destination / "learning_rate_history.csv", settings.case_2hp)
             times["time_initializations"] = time.perf_counter()
-            solver.train(settings)
+            solver.train(settings, auto_lr_scheduler)
             times["time_training"] = time.perf_counter()
         except KeyboardInterrupt:
             times["time_training"] = time.perf_counter()

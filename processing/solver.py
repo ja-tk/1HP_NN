@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from torch.nn import Module, MSELoss, modules
 from torch.optim import Adam, Optimizer
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torch import manual_seed
@@ -22,21 +23,23 @@ class Solver(object):
     train_dataloader: DataLoader
     val_dataloader: DataLoader
     loss_func: modules.loss._Loss = MSELoss()
-    learning_rate: float = 1e-5
+    learning_rate: float = 5e-5
     opt: Optimizer = Adam
     finetune: bool = False
     best_model_params: dict = None
+    scheduler: ReduceLROnPlateau = None
 
     def __post_init__(self):
         self.opt = self.opt(self.model.parameters(),
                             self.learning_rate, weight_decay=1e-4)
         # contains the epoch and learning rate, when lr changes
         self.lr_schedule = {0: self.opt.param_groups[0]["lr"]}
+        self.scheduler = ReduceLROnPlateau(self.opt, 'min', factor=0.5, patience=25)
 
         if not self.finetune:
             self.model.apply(weights_init)
 
-    def train(self, settings: SettingsTraining):
+    def train(self, settings: SettingsTraining, auto_lr_scheduler: bool):
         manual_seed(0)
         log_val_epoch = True
         if log_val_epoch:
@@ -57,9 +60,13 @@ class Solver(object):
         epochs = tqdm(range(settings.epochs), desc="epochs", disable=False)
         for epoch in epochs:
             try:
-                # Set lr according to schedule
-                if epoch in self.lr_schedule.keys():
-                    self.opt.param_groups[0]["lr"] = self.lr_schedule[epoch]
+                
+                if not auto_lr_scheduler:
+                    # Set lr according to schedule
+                    if epoch in self.lr_schedule.keys():
+                        self.opt.param_groups[0]["lr"] = self.lr_schedule[epoch]
+                else:
+                    last_lr=self.opt.param_groups[0]["lr"]
 
                 # Training
                 self.model.train()
@@ -78,6 +85,14 @@ class Solver(object):
                 epochs.set_postfix_str(
                     f"train loss: {train_epoch_loss:.2e}, val loss: {val_epoch_loss:.2e}, lr: {self.opt.param_groups[0]['lr']:.1e}")
                 
+                #update learning rate
+                if auto_lr_scheduler:
+                    self.scheduler.step(val_epoch_loss)
+                    new_lr = self.scheduler.get_last_lr()[0]
+                    # Logging
+                    if new_lr != last_lr and int(epoch)+1<=int(epochs):
+                        self.lr_schedule[int(epoch)+1] = float(new_lr)
+
                 # Keep best model
                 if self.best_model_params is None or val_epoch_loss < self.best_model_params["loss"]:
                     self.best_model_params = {
