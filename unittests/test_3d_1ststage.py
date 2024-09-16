@@ -12,7 +12,7 @@ def test_get_hp_position():
     # Expected result
     expected = 3
     # Actual result
-    actual=get_hp_position(tensor)
+    actual=get_hp_position(tensor)[0]
     # Test
     assert actual==expected, "Result is not the expected position"
 
@@ -40,7 +40,7 @@ def test_get_hp_position_from_info():
     # Expected result
     expected = 0
     # Actual result
-    actual=get_hp_position_from_info(tensor,info)
+    actual=get_hp_position_from_info(tensor,info)[0]
     # Test
     assert actual==expected, "Result is not the expected position"
 
