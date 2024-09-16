@@ -109,11 +109,11 @@ def run(settings: SettingsTraining):
     start= time.perf_counter()
     times[f"avg_inference_time of {which_dataset}"], summed_error_pic = infer_all_and_summed_pic(model, dataloaders[which_dataset], settings.device)
     errors=measure_losses(model, dataloaders[which_dataset], settings)
-    more_errors=measure_additional_losses(model, dataloaders[which_dataset], summed_error_pic, settings)
+    errors={**errors, **measure_additional_losses(model, dataloaders[which_dataset], summed_error_pic, settings)}
     times[f"duration of measurement in seconds"]=time.perf_counter()-start
     print("Measurements finished\n")
 
-    save_all_measurements(settings, len(dataloaders[which_dataset].dataset), times, solver, errors, more_errors)
+    save_all_measurements(settings, len(dataloaders[which_dataset].dataset), times, solver, errors)
     print(f"Whole process including visualization and measurements took {(time.perf_counter()-times['time_begin'])//60} minutes {np.round((time.perf_counter()-times['time_begin'])%60, 1)} seconds\nOutput in {settings.destination.parent.name}/{settings.destination.name}\n")
 
     return model
