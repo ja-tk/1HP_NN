@@ -16,7 +16,7 @@ from networks.unet3d import UNet3d
 from processing.solver import Solver
 from preprocessing.prepare import prepare_data_and_paths
 from postprocessing.visualization import plot_avg_error_cellwise, visualizations, infer_all_and_summed_pic
-from postprocessing.measurements import measure_loss, save_all_measurements
+from postprocessing.measurements import measure_loss, save_all_measurements, measure_additional_losses, measure_losses
 
 def init_data(settings: SettingsTraining, seed=1):
     if settings.problem in ["2stages", "3d"]:
@@ -26,7 +26,7 @@ def init_data(settings: SettingsTraining, seed=1):
     elif settings.problem == "extend2":
         dataset = DatasetExtend2(settings.dataset_prep, box_size=settings.len_box, skip_per_dir=settings.skip_per_dir)
         settings.inputs += "T"
-    print(f"Length of dataset: {len(dataset)}")
+    print(f"Length of dataset: {len(dataset)}\n")
     generator = torch.Generator().manual_seed(seed)
 
     split_ratios = [0.7, 0.2, 0.1]
@@ -69,7 +69,7 @@ def run(settings: SettingsTraining):
         finetune = True if settings.case == "finetune" else False
         solver = Solver(model, dataloaders["train"], dataloaders["val"], loss_func=loss_fn, finetune=finetune)
         try:
-            auto_lr_scheduler = True
+            auto_lr_scheduler = True #set False for own lr_schedule, True for automatic lr_schedule
             if not auto_lr_scheduler:
                 solver.load_lr_schedule(settings.destination / "learning_rate_history.csv", settings.case_2hp)
             times["time_initializations"] = time.perf_counter()
@@ -84,51 +84,92 @@ def run(settings: SettingsTraining):
 
     # save model
     model.save(settings.destination)
-
-    # visualization
-    which_dataset = "val"
-    pic_format = "png"
     times["time_end"] = time.perf_counter()
+    
+    which_dataset = "val"
     if settings.case == "test":
         settings.visualize = True
         which_dataset = "test"
-        # errors = measure_loss(model, dataloaders[which_dataset], settings.device)
-    save_all_measurements(settings, len(dataloaders[which_dataset].dataset), times, solver) #, errors)
+
+    print(f"Used dataset: {which_dataset}")
+    print(f"Number of datapoints: {len(dataloaders[which_dataset].dataset)}")
+    # visualization
+    pic_format = "png"
     if settings.visualize:
+        print(f"Start visualization of {which_dataset}")
+        start= time.perf_counter()
         visualizations(model, dataloaders[which_dataset], settings.device, plot_path=settings.destination / f"plot_{which_dataset}", amount_datapoints_to_visu=5, pic_format=pic_format)
         times[f"avg_inference_time of {which_dataset}"], summed_error_pic = infer_all_and_summed_pic(model, dataloaders[which_dataset], settings.device)
         plot_avg_error_cellwise(dataloaders[which_dataset], summed_error_pic, {"folder" : settings.destination, "format": pic_format})
-        print("Visualizations finished")
-        
-    print(f"Whole process took {(times['time_end']-times['time_begin'])//60} minutes {np.round((times['time_end']-times['time_begin'])%60, 1)} seconds\nOutput in {settings.destination.parent.name}/{settings.destination.name}")
+        print("Visualization finished\n")
+        times["duration of visualization in seconds"] = time.perf_counter()-start
+
+    #measurements
+    print(f"Start measurements of {which_dataset}")
+    start= time.perf_counter()
+    times[f"avg_inference_time of {which_dataset}"], summed_error_pic = infer_all_and_summed_pic(model, dataloaders[which_dataset], settings.device)
+    errors=measure_losses(model, dataloaders[which_dataset], settings)
+    more_errors=measure_additional_losses(model, dataloaders[which_dataset], summed_error_pic, settings)
+    times[f"duration of measurement in seconds"]=time.perf_counter()-start
+    print("Measurements finished\n")
+
+    save_all_measurements(settings, len(dataloaders[which_dataset].dataset), times, solver, errors, more_errors)
+    print(f"Whole process including visualization and measurements took {(time.perf_counter()-times['time_begin'])//60} minutes {np.round((time.perf_counter()-times['time_begin'])%60, 1)} seconds\nOutput in {settings.destination.parent.name}/{settings.destination.name}\n")
 
     return model
 
 def save_inference(model_name:str, in_channels: int, settings: SettingsTraining):
     # push all datapoints through and save all outputs
+    print("Start inference...")
+    time_start = time.perf_counter()
     if settings.problem == "2stages":
         model = UNet(in_channels=in_channels).float()
     elif settings.problem in ["extend1", "extend2"]:
         model = UNetHalfPad(in_channels=in_channels).float()
     elif settings.problem == "3d":
         model = UNet3d(in_channels=in_channels).float()
-    model.load(model_name, settings.device)
-    model.eval()
 
+    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    start.record()
+    model.load(model_name, settings.device)
+    end.record()
+    torch.cuda.synchronize()
+    time_model = start.elapsed_time(end)/1000
+
+    model.eval()
+    
     data_dir = settings.dataset_prep
     (data_dir / "Outputs").mkdir(exist_ok=True)
+    counter=0
+    time_load_and_transfer=0
+    time_infer=0
 
     for datapoint in (data_dir / "Inputs").iterdir():
+        start.record()
         data = torch.load(datapoint)
         data = torch.unsqueeze(data, 0)
-        time_start = time.perf_counter()
-        y_out = model(data.to(settings.device)).to(settings.device)
-        time_end = time.perf_counter()
+        data=data.to(settings.device)
+        end.record()
+        torch.cuda.synchronize()
+        time_load_and_transfer += start.elapsed_time(end)/1000
+
+        start.record()
+        y_out = model(data)
+        end.record()
+        torch.cuda.synchronize()
+        time_infer += start.elapsed_time(end)/1000
+
         y_out = y_out.detach().cpu()
         y_out = torch.squeeze(y_out, 0)
         torch.save(y_out, data_dir / "Outputs" / datapoint.name)
-        print(f"Inference of {datapoint.name} took {time_end-time_start} seconds")
-    
+        counter+=1
+
+    print(f"Model loading took {time_model} seconds")
+    print(f"Number of datapoints: {counter}")
+    print(f"Averaged inference time of one datapoint: {time_infer/counter} seconds")
+    print(f"Averaged loading and transfer time of one datapoint: {time_load_and_transfer/counter} seconds")
+    print(f"Whole process of inference took {time.perf_counter() - time_start} seconds")
+
     print(f"Inference finished, outputs saved in {data_dir / 'Outputs'}")
 
 if __name__ == "__main__":
