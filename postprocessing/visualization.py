@@ -62,6 +62,7 @@ def visualizations(model: UNet | UNet3d, dataloader: DataLoader, device: str, am
 
     norm = dataloader.dataset.dataset.norm
     info = dataloader.dataset.dataset.info
+    model.to(device)
     model.eval()
     settings_pic = {"format": pic_format,
                     "dpi": 600,}
@@ -75,7 +76,7 @@ def visualizations(model: UNet | UNet3d, dataloader: DataLoader, device: str, am
 
             x = torch.unsqueeze(inputs[datapoint_id].to(device), 0)
             y = labels[datapoint_id]
-            y_out = model(x).to(device)
+            y_out = model(x)
 
             x, y, y_out = reverse_norm_one_dp(x, y, y_out, norm)
 
@@ -111,7 +112,7 @@ def prepare_data_to_plot(x: torch.Tensor, y: torch.Tensor, y_out:torch.Tensor, i
     temp_min = min(y.min(), y_out.min())
 
     if y.dim() ==3:
-        position=get_hp_position_from_info(x, info)
+        position=get_hp_position_from_info(x, info)[0]
 
         y=remove_dimension(y, position)
         y_out=remove_dimension(y_out, position)
@@ -181,12 +182,13 @@ def plot_isolines(data: Dict[str, DataToVisualize], name_pic: str, settings_pic:
     plt.tight_layout()
     plt.savefig(f"{name_pic}_isolines.{settings_pic['format']}", **settings_pic)
 
-def infer_all_and_summed_pic(model: UNet, dataloader: DataLoader, device: str):
+def infer_all_and_summed_pic(model: UNet | UNet3d, dataloader: DataLoader, device: str):
     '''
     sum inference time (including reverse-norming) and pixelwise error over all datapoints
     '''
     
     norm = dataloader.dataset.dataset.norm
+    model.to(device)
     model.eval()
 
     current_id = 0
@@ -197,17 +199,22 @@ def infer_all_and_summed_pic(model: UNet, dataloader: DataLoader, device: str):
         len_batch = inputs.shape[0]
         for datapoint_id in range(len_batch):
             # get data
-            start_time = time.perf_counter()
             x = inputs[datapoint_id].to(device)
             x = torch.unsqueeze(x, 0)
-            y_out = model(x).to(device)
+
+            start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+            start.record()
+            y_out = model(x)
+            end.record()
+            torch.cuda.synchronize()
+            avg_inference_time += start.elapsed_time(end)/1000
+            
             y = labels[datapoint_id]
 
             # reverse transform for plotting real values
             x = norm.reverse(x.cpu().detach().squeeze(), "Inputs")
             y = norm.reverse(y.cpu().detach(),"Labels")[0]
             y_out = norm.reverse(y_out.cpu().detach()[0],"Labels")[0]
-            avg_inference_time += (time.perf_counter() - start_time)
             summed_error_pic += abs(y-y_out)
 
             current_id += 1
@@ -225,8 +232,18 @@ def plot_avg_error_cellwise(dataloader, summed_error_pic, settings_pic: dict):
 
     if summed_error_pic.dim()==3:
         #transpose for xy
-        position=get_hp_position(summed_error_pic.transpose(0,2))
-        summed_error_pic=remove_dimension(summed_error_pic, position)
+        summed_error_pic.transpose(0,2)#z,y,x
+
+        #slice in z-direction
+        #position=get_hp_position(summed_error_pic)[0]
+        #summed_error_pic=remove_dimension(summed_error_pic, position)#y,x
+        
+        #keep the highest values in z-direction
+        summed_error_pic=torch.max(summed_error_pic,0)[0]
+
+        #mean in z-direction
+        #summed_error_pic_2d=torch.mean(summed_error_pic,0)
+
 
     plt.figure()
     plt.imshow(summed_error_pic.T, cmap="RdBu_r", extent=extent)
@@ -244,14 +261,22 @@ def _aligned_colorbar(*args, **kwargs):
         "right", size=0.3, pad=0.05)
     plt.colorbar(*args, cax=cax, **kwargs)
 
-def get_hp_position(tensor: torch.tensor): 
+def get_hp_position(tensor: torch.tensor):#intended for summed_error_pic, as error is highest at hp position
+    '''
+    Returns the hp position by searching for the maximum tensor value.
+    Only works for 3D input data (X,Y,Z)
+    '''     
     assert tensor.dim()==3 , f"Tensor has wrong dimension: {tensor.dim()} instead of 3"
     
     loc_hp = np.array(np.where(tensor == tensor.max())).squeeze()
-    position=loc_hp[0]
-    return position
+    return loc_hp
 
-def get_hp_position_from_info(tensor: torch.tensor, info: dict):     
+def get_hp_position_from_info(tensor: torch.tensor, info: dict):
+    '''
+    Returns the hp position by reading the corresponding channel index from info
+    and then searching for the maximum tensor value in this channel.
+    Only works for 4D input data with first entry "channels" (C,X,Y,Z)
+    '''     
     assert tensor.dim()==4 , f"Tensor has wrong dimension: {tensor.dim()} instead of 4"
     try:
         idx = info["Inputs"]["Material ID"]["index"]
@@ -259,10 +284,13 @@ def get_hp_position_from_info(tensor: torch.tensor, info: dict):
         idx = info["Inputs"]["SDF"]["index"]
     loc_hp = np.array(np.where(tensor[idx] == tensor[idx].max())).squeeze()
     
-    position=loc_hp[0]
-    return position
+    return loc_hp
 
 def remove_dimension(tensor: torch.tensor, position: int):
+    '''
+    Removes first dimension at given position.
+    Works for 3D tensors (X,Y,Z) or 4D tensors with first entry "channels" (C,X,Y,Z)
+    '''
     if tensor.dim()==3:
         assert position <= tensor.shape[0], "position is larger than data dimension 0"
         tensor=tensor[position,:,:]
