@@ -15,6 +15,7 @@ from postprocessing.visualization import visualizations
 
 from data_stuff.utils import SettingsTraining
 from networks.unet import weights_init, UNet
+from networks.unet3d import weights_init_3d
 from networks.unetHalfPad import UNetHalfPad
 
 @dataclass
@@ -34,10 +35,14 @@ class Solver(object):
                             self.learning_rate, weight_decay=1e-4)
         # contains the epoch and learning rate, when lr changes
         self.lr_schedule = {0: self.opt.param_groups[0]["lr"]}
-        self.scheduler = ReduceLROnPlateau(self.opt, 'min', factor=0.5, patience=25)
+        self.scheduler = ReduceLROnPlateau(self.opt, 'min', factor=0.5, patience=10, cooldown=10, min_lr=1e-6)
 
         if not self.finetune:
-            self.model.apply(weights_init)
+            if self.model.__class__.__name__=="UNet3d":
+                print(self.model.__class__.__name__)
+                self.model.apply(weights_init_3d)
+            else:
+                self.model.apply(weights_init)                                                  
 
     def train(self, settings: SettingsTraining, auto_lr_scheduler: bool):
         manual_seed(0)
@@ -90,7 +95,7 @@ class Solver(object):
                     self.scheduler.step(val_epoch_loss)
                     new_lr = self.scheduler.get_last_lr()[0]
                     # Logging
-                    if new_lr != last_lr and int(epoch)+1<=int(epochs):
+                    if new_lr != last_lr and int(epoch)+1<=int(settings.epochs):
                         self.lr_schedule[int(epoch)+1] = float(new_lr)
 
                 # Keep best model
@@ -136,6 +141,10 @@ class Solver(object):
         self.model.load_state_dict(self.best_model_params["state_dict"]) #self.model = 
         self.opt.load_state_dict(self.best_model_params["optimizer"]) #self.opt =
         print(f"Best model was found in epoch {self.best_model_params['epoch']}.")
+        
+        for key, value in self.best_model_params:
+                print("best model params:\n")
+                print(f"{key}: {value}\n")
 
         if log_val_epoch:
             file.close()
