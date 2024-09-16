@@ -3,7 +3,7 @@ from torch import save, tensor, cat, load, equal
 import pathlib
 
 class UNet3d(nn.Module):
-    def __init__(self, in_channels=4, out_channels=1, init_features=32, depth=3, kernel_size=5):
+    def __init__(self, in_channels=4, out_channels=1, init_features=16, depth= 3, kernel_size=5):
         super().__init__()
         features = init_features
         padding_mode =  "zeros"            
@@ -43,34 +43,31 @@ class UNet3d(nn.Module):
     @staticmethod
     def _block(in_channels, features, kernel_size=5, padding_mode="zeros"):
         return nn.Sequential(
-            # PaddingCircular(kernel_size, direction="both"),
             nn.Conv3d(
                 in_channels=in_channels,
                 out_channels=features,
                 kernel_size=kernel_size,
                 padding="same",
-                # padding_mode=padding_mode,
+                #padding_mode='reflect',
                 bias=True,
             ),
-            nn.ReLU(inplace=True),      
-            # PaddingCircular(kernel_size, direction="both"),
+            nn.ReLU(inplace=True),
             nn.Conv3d(
                 in_channels=features,
                 out_channels=features,
                 kernel_size=kernel_size,
                 padding="same",
-                # padding_mode=padding_mode,
+                #padding_mode='reflect',
                 bias=True,
             ),
             nn.BatchNorm3d(num_features=features),
-            nn.ReLU(inplace=True),      
-            # PaddingCircular(kernel_size, direction="both"),
+            nn.ReLU(inplace=True),
             nn.Conv3d(
                 in_channels=features,
                 out_channels=features,
                 kernel_size=kernel_size,
                 padding="same",
-                # padding_mode=padding_mode,
+                #padding_mode='reflect',
                 bias=True,
             ),        
             nn.ReLU(inplace=True),
@@ -111,7 +108,7 @@ class UNet3d(nn.Module):
                     raise Exception
         if models_differ == 0:  print('Models match perfectly! :)')
 
-def weights_init(m):
+def weights_init_3d(m):
     classname = m.__class__.__name__
     if classname.find("Conv") != -1:
         m.weight.data.normal_(0.0, 0.02)
@@ -119,21 +116,3 @@ def weights_init(m):
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.zero_()
 
-class PaddingCircular(nn.Module):
-    def __init__(self, kernel_size, direction="both"):
-        super().__init__()
-        self.pad_len = kernel_size//2
-        self.direction = direction
-
-    def forward(self, x:tensor) -> tensor:
-        if self.direction == "both":
-            padding_vector = (self.pad_len,)*4
-            result = nn.functional.pad(x, padding_vector, mode='circular')    
-
-        elif self.direction == "horizontal":
-            padding_vector = (self.pad_len,)*2 + (0,)*2
-            result = nn.functional.pad(x, padding_vector, mode='circular')    
-            padding_vector = (0,)*2 + (self.pad_len,)*2  
-            result = nn.functional.pad(result, padding_vector, mode='constant')     # or 'reflect'?
-            
-        return result
