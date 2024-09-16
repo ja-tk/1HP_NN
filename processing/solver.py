@@ -16,6 +16,7 @@ from tqdm.auto import tqdm
 # from postprocessing.visualization import visualizations
 from processing.networks.unet import UNet
 from processing.networks.model import weights_init
+from processing.networks.unet3d import weights_init_3d
 
 class KLD_log():
     def __init__(self):
@@ -40,12 +41,15 @@ class Solver(object):
         # self.opt = self.opt(self.model.parameters(), self.learning_rate, weight_decay=1e-4) # already done in optuna case
         # contains the epoch and learning rate, when lr changes
         self.lr_schedule = {0: self.opt.param_groups[0]["lr"]}
-        # self.lr_scheduler = lr_scheduler.ReduceLROnPlateau(self.opt, patience=10, cooldown=10, factor=0.5)
+        self.lr_scheduler = lr_scheduler.ReduceLROnPlateau(self.opt, patience=10, cooldown=10, factor=0.5, min_lr=1e-6)
 
         if not self.finetune:
-            self.model.apply(weights_init)
+            if self.model.__class__.__name__=="UNet3d":
+                self.model.apply(weights_init_3d)
+            else:
+                self.model.apply(weights_init) 
         
-        self.metrics: dict = {"MSE": MSELoss(), "MAE": L1Loss(), "KLD": KLD_log(), "Huber": HuberLoss(), "SmoothL1": SmoothL1Loss()}
+        self.metrics: dict = {"MSE": MSELoss(), "MAE": L1Loss()}#, "KLD": KLD_log(), "Huber": HuberLoss(), "SmoothL1": SmoothL1Loss()}
 
     def train(self, trial, args: dict):
         manual_seed(0)
@@ -105,7 +109,7 @@ class Solver(object):
                 if trial.should_prune():
                     raise optuna.exceptions.TrialPruned()
 
-                # self.lr_scheduler.step(val_epoch_loss)
+                self.lr_scheduler.step(val_epoch_loss)
 
             except KeyboardInterrupt:
                 try:
@@ -135,8 +139,13 @@ class Solver(object):
 
             y_pred = self.model(x)
             required_size = y_pred.shape[2:]
-            start_pos = ((y.shape[2] - required_size[0])//2, (y.shape[3] - required_size[1])//2)
-            y_reduced = y[:, :, start_pos[0]:start_pos[0]+required_size[0], start_pos[1]:start_pos[1]+required_size[1]]
+            
+            #3d
+            start_pos = ((y.shape[2] - required_size[0])//2, (y.shape[3] - required_size[1])//2, (y.shape[4] - required_size[2])//2)
+            y_reduced = y[:, :, start_pos[0]:start_pos[0]+required_size[0], start_pos[1]:start_pos[1]+required_size[1], start_pos[2]:start_pos[2]+required_size[2]]
+            
+            #start_pos = ((y.shape[2] - required_size[0])//2, (y.shape[3] - required_size[1])//2)
+            #y_reduced = y[:, :, start_pos[0]:start_pos[0]+required_size[0], start_pos[1]:start_pos[1]+required_size[1]]
 
             loss = self.loss_func(y_pred, y_reduced)
 
