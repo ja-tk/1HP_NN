@@ -18,7 +18,7 @@ from preprocessing.data_init import init_data, load_all_datasets_in_full
 from postprocessing.visualization import visualizations
 from postprocessing.measurements import measure_losses_paper24
 
-def objective(trial, args: dict):
+def objective(trial):
 
     ut.make_paths(args) # and check if data / model exists
     ut.save_yaml(args, args["destination"] / "command_line_arguments.yaml")
@@ -29,11 +29,9 @@ def objective(trial, args: dict):
     args["inputs"] = trial.suggest_categorical("input_vars", ["gksi"])
 
     # Get the dataset.
-    if args["problem"]=="3d":
-        input_channels, dataloaders = init_data(args)
-        output_channels=1
-    else:
-        input_channels, output_channels, dataloaders = init_data(args)
+    input_channels, output_channels, dataloaders = init_data(args)
+    print("output channel")
+    print(output_channels)
     # Generate the model.
     depth = trial.suggest_categorical("depth", [3])
     init_features = trial.suggest_categorical("init_features", [16])
@@ -49,12 +47,11 @@ def objective(trial, args: dict):
 
 
     # Generate the optimizers.
-    lr = trial.suggest_categorical("lr", [1e-4])
     optimizer_name = trial.suggest_categorical("optimizer", ["Adam"])#["Adam", "RMSprop", "SGD"])
-    optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
+    optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=1e-4)
 
     # Training of the model.
-    solver = Solver(model, dataloaders["train"], dataloaders["val"], loss_func=L1Loss(), opt=optimizer, learning_rate=lr)
+    solver = Solver(model, dataloaders["train"], dataloaders["val"], loss_func=L1Loss(), opt=optimizer, learning_rate=1e-4)
     try:
         training_time = datetime.now()
         solver.load_lr_schedule(args["destination"] / "learning_rate_history.csv")
