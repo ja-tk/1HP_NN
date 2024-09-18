@@ -51,7 +51,7 @@ def objective(trial):
     optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=1e-4)
 
     # Training of the model.
-    solver = Solver(model, dataloaders["train"], dataloaders["val"], loss_func=L1Loss(), opt=optimizer, learning_rate=1e-4)
+    solver = Solver(model, dataloaders["train"], dataloaders["val"], loss_func=MSELoss(), opt=optimizer, learning_rate=1e-4)
     try:
         training_time = datetime.now()
         solver.load_lr_schedule(args["destination"] / "learning_rate_history.csv")
