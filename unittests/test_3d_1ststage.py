@@ -1,7 +1,7 @@
 import torch
 import yaml
 
-from postprocessing.visualization import get_hp_position, get_hp_position_from_info, remove_dimension
+from data_stuff.utils_3d import get_hp_position, get_hp_position_from_input, remove_first_dim
 #to start, move file into parent folder
 
 def test_get_hp_position():
@@ -16,7 +16,7 @@ def test_get_hp_position():
     # Test
     assert actual==expected, "Result is not the expected position"
 
-def test_get_hp_position_from_info():
+def test_get_hp_position_from_input():
     #Fixture
     with open("unittests/dummyInfo.yaml", "r") as f:
             info = yaml.safe_load(f)
@@ -40,11 +40,11 @@ def test_get_hp_position_from_info():
     # Expected result
     expected = 0
     # Actual result
-    actual=get_hp_position_from_info(tensor,info)[0]
+    actual=get_hp_position_from_input(tensor,info)[0]
     # Test
     assert actual==expected, "Result is not the expected position"
 
-def test_remove_dimension_3d():
+def test_remove_first_dimension_3d():
     #Fixture
     #4x2x3
     tensor = torch.Tensor([
@@ -58,7 +58,7 @@ def test_remove_dimension_3d():
     # Expected result
     expected = torch.ones((2,3))
     # Actual result
-    actual=remove_dimension(tensor,position)
+    actual=remove_first_dim(tensor,position)
     # Test
     assert torch.allclose(actual, expected), f"z dim could not be removed at position {position}"
 
@@ -73,7 +73,7 @@ def test_remove_dimension_4d():
     # Expected result
     expected = tensor[:,0,:,:]
     # Actual result
-    actual=remove_dimension(tensor,position)
+    actual=remove_first_dim(tensor,position)
     # Test
     assert torch.allclose(actual, expected), f"z dim could not be removed at position {position}"
 
@@ -81,7 +81,7 @@ def test_remove_dimension_4d():
 if __name__ == "__main__":
     print("tests start")
     test_get_hp_position()
-    test_get_hp_position_from_info()
-    test_remove_dimension_3d()
+    test_get_hp_position_from_input()
+    test_remove_first_dimension_3d()
     test_remove_dimension_4d()
     print("tests finished")
