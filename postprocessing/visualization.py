@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from torch.utils.data import DataLoader
+from data_stuff.utils_3d import get_hp_position, get_hp_position_from_input, remove_first_dim
 
 from data_stuff.transforms import NormalizeTransform
 from networks.unet import UNet
@@ -72,7 +73,6 @@ def visualizations(model: UNet | UNet3d, dataloader: DataLoader, device: str, am
         len_batch = inputs.shape[0]
         for datapoint_id in range(len_batch):
             name_pic = f"{plot_path}_{current_id}"
-            y_label="x [m]"
 
             x = torch.unsqueeze(inputs[datapoint_id].to(device), 0)
             y = labels[datapoint_id]
@@ -80,16 +80,20 @@ def visualizations(model: UNet | UNet3d, dataloader: DataLoader, device: str, am
 
             x, y, y_out = reverse_norm_one_dp(x, y, y_out, norm)
 
-            if y.dim()==3:
-                # visualization for xy
-                # 2d data comes in transposed (for xy) , 3d data not (look at ReduceTo2DTransform)
-                dict_to_plot=prepare_data_to_plot(x.transpose(1,3), y.transpose(0,2), y_out.transpose(0,2), info) # order (z,y,x)
-                name_pic = f"{plot_path}_{current_id}_xy"
-                plot_datafields(dict_to_plot, name_pic, settings_pic, y_label)
+            if y.dim()==3:# (X,Y,Z)
                 # visualization for zy
                 name_pic = f"{plot_path}_{current_id}_zy"
                 y_label="z [m]"
+                dict_to_plot = prepare_data_to_plot(x, y, y_out, info)
+                plot_datafields(dict_to_plot, name_pic, settings_pic, y_label)
 
+                # visualization for xy
+                x=x.transpose(1,3)# (Z,Y,X)
+                y=y.transpose(0,2)
+                y_out=y_out.transpose(0,2)
+                name_pic = f"{plot_path}_{current_id}_xy"
+                
+            y_label="x [m]"
             dict_to_plot = prepare_data_to_plot(x, y, y_out, info)
             plot_datafields(dict_to_plot, name_pic, settings_pic, y_label)
             # plot_isolines(dict_to_plot, name_pic, settings_pic)
@@ -111,12 +115,11 @@ def prepare_data_to_plot(x: torch.Tensor, y: torch.Tensor, y_out:torch.Tensor, i
     temp_max = max(y.max(), y_out.max())
     temp_min = min(y.min(), y_out.min())
 
-    if y.dim() ==3:
-        position=get_hp_position_from_info(x, info)[0]
-
-        y=remove_dimension(y, position)
-        y_out=remove_dimension(y_out, position)
-        x=remove_dimension(x, position)
+    if len(y.shape) ==3:
+        position=get_hp_position_from_input(x, info)[0]
+        y=remove_first_dim(y, position)
+        y_out=remove_first_dim(y_out, position)
+        x=remove_first_dim(x, position)
 
     extent_highs = (np.array(info["CellsSize"][:2]) * x.shape[-2:])
     
@@ -224,81 +227,54 @@ def infer_all_and_summed_pic(model: UNet | UNet3d, dataloader: DataLoader, devic
     return avg_inference_time, summed_error_pic
 
 def plot_avg_error_cellwise(dataloader, summed_error_pic, settings_pic: dict):
-    # plot avg error cellwise AND return time measurements for inference
+    # plot avg error cellwise 
+    # in case of 3D: plots xy and zy plane in height of hp, zy plane with averaged x_values
+    # optional: plot all zy planes
 
     info = dataloader.dataset.dataset.info
     extent_highs = (np.array(info["CellsSize"][:2]) * (dataloader.dataset[0][0][0].shape)[-2:])
     extent = (0,int(extent_highs[0]),int(extent_highs[1]),0)
 
-    if summed_error_pic.dim()==3:
+    if len(summed_error_pic.shape)==3:
+        summed_error_pics={}
+        #for zy
+        x_position=get_hp_position(summed_error_pic)[0]
+        summed_error_pic_zy=remove_first_dim(summed_error_pic, x_position)
+        summed_error_pics["zy_slice"]=summed_error_pic_zy
+
+        #mean in x-direction
+        summed_error_pic_mean_zy=torch.mean(summed_error_pic,0)
+        summed_error_pics["zy_mean"]=summed_error_pic_mean_zy
+
+        #get all slices in x-direction
+        if False:
+            for x_position in range(summed_error_pic.shape[0]):
+                summed_error_pic_yz=remove_first_dim(summed_error_pic, x_position)
+                summed_error_pics[f"zy_slice_{x_position}"]=summed_error_pic_yz
+
         #transpose for xy
-        summed_error_pic.transpose(0,2)#z,y,x
+        summed_error_pic=summed_error_pic.transpose(0,2)# (X,Y,Z) -> (Z,Y,X)   
+        z_position=get_hp_position(summed_error_pic)[0]
+        summed_error_pic_xy=remove_first_dim(summed_error_pic, z_position)
+        summed_error_pics["xy_slice"]=summed_error_pic_xy
 
-        #slice in z-direction
-        #position=get_hp_position(summed_error_pic)[0]
-        #summed_error_pic=remove_dimension(summed_error_pic, position)#y,x
-        
-        #keep the highest values in z-direction
-        summed_error_pic=torch.max(summed_error_pic,0)[0]
+    else:
+        summed_error_pics={"xy": summed_error_pic}
+       
+    for dim, tensor in summed_error_pics.items():
+        plt.figure()
+        plt.imshow(tensor.T, cmap="RdBu_r", extent=extent)
+        plt.gca().invert_yaxis()
+        plt.ylabel(f"{dim[0]} [m]")
+        plt.xlabel(f"{dim[1]} [m]")
+        plt.title("Cellwise averaged error in [°C]")
+        _aligned_colorbar()
 
-        #mean in z-direction
-        #summed_error_pic_2d=torch.mean(summed_error_pic,0)
-
-
-    plt.figure()
-    plt.imshow(summed_error_pic.T, cmap="RdBu_r", extent=extent)
-    plt.gca().invert_yaxis()
-    plt.ylabel("x [m]")
-    plt.xlabel("y [m]")
-    plt.title("Cellwise averaged error [°C]")
-    _aligned_colorbar()
-
-    plt.tight_layout()
-    plt.savefig(f"{settings_pic['folder']}/avg_error.{settings_pic['format']}", format=settings_pic['format'])
+        plt.tight_layout()
+        plt.savefig(f"{settings_pic['folder']}/avg_error_{dim}.{settings_pic['format']}", format=settings_pic['format'])
+        plt.close()
 
 def _aligned_colorbar(*args, **kwargs):
     cax = make_axes_locatable(plt.gca()).append_axes(
         "right", size=0.3, pad=0.05)
     plt.colorbar(*args, cax=cax, **kwargs)
-
-def get_hp_position(tensor: torch.tensor):#intended for summed_error_pic, as error is highest at hp position
-    '''
-    Returns the hp position by searching for the maximum tensor value.
-    Only works for 3D input data (X,Y,Z)
-    '''     
-    assert tensor.dim()==3 , f"Tensor has wrong dimension: {tensor.dim()} instead of 3"
-    
-    loc_hp = np.array(np.where(tensor == tensor.max())).squeeze()
-    return loc_hp
-
-def get_hp_position_from_info(tensor: torch.tensor, info: dict):
-    '''
-    Returns the hp position by reading the corresponding channel index from info
-    and then searching for the maximum tensor value in this channel.
-    Only works for 4D input data with first entry "channels" (C,X,Y,Z)
-    '''     
-    assert tensor.dim()==4 , f"Tensor has wrong dimension: {tensor.dim()} instead of 4"
-    try:
-        idx = info["Inputs"]["Material ID"]["index"]
-    except:
-        idx = info["Inputs"]["SDF"]["index"]
-    loc_hp = np.array(np.where(tensor[idx] == tensor[idx].max())).squeeze()
-    
-    return loc_hp
-
-def remove_dimension(tensor: torch.tensor, position: int):
-    '''
-    Removes first dimension at given position.
-    Works for 3D tensors (X,Y,Z) or 4D tensors with first entry "channels" (C,X,Y,Z)
-    '''
-    if tensor.dim()==3:
-        assert position <= tensor.shape[0], "position is larger than data dimension 0"
-        tensor=tensor[position,:,:]
-        tensor.squeeze(0)
-    else:
-        assert tensor.dim()==4 , f"Tensor has wrong dimension: {tensor.dim()} instead of 4"
-        assert position <= tensor.shape[1], "position is larger than data dimension 1"
-        tensor=tensor[:,position,:,:]
-        tensor.squeeze(1)
-    return tensor
-
