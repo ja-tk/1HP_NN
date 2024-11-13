@@ -4,7 +4,7 @@ import pathlib
 import time
 from dataclasses import dataclass
 
-from torch.nn import Module, MSELoss, modules
+from torch.nn import Module, MSELoss, modules, SmoothL1Loss, L1Loss
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
@@ -12,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch import manual_seed
 from tqdm.auto import tqdm
 from postprocessing.visualization import visualizations
+from pathlib import Path
 
 from data_stuff.utils import SettingsTraining
 from networks.unet import weights_init, UNet
@@ -28,21 +29,24 @@ class Solver(object):
     opt: Optimizer = Adam
     finetune: bool = False
     best_model_params: dict = None
-    scheduler: ReduceLROnPlateau = None
+    lr_scheduler: ReduceLROnPlateau = None
 
     def __post_init__(self):
         self.opt = self.opt(self.model.parameters(),
                             self.learning_rate, weight_decay=1e-4)
         # contains the epoch and learning rate, when lr changes
         self.lr_schedule = {0: self.opt.param_groups[0]["lr"]}
-        self.scheduler = ReduceLROnPlateau(self.opt, 'min', factor=0.5, patience=10, cooldown=10, min_lr=1e-6)
+        self.lr_scheduler = ReduceLROnPlateau(self.opt, 'min', factor=0.5, patience=10, cooldown=10, min_lr=1e-6)                   
 
         if not self.finetune:
             if self.model.__class__.__name__=="UNet3d":
                 print(self.model.__class__.__name__)
                 self.model.apply(weights_init_3d)
             else:
-                self.model.apply(weights_init)                                                  
+                self.model.apply(weights_init)
+
+        # measure additional metrics during training
+        self.metrics: dict = {"MSE": MSELoss(), "MAE": L1Loss()}                                            
 
     def train(self, settings: SettingsTraining, auto_lr_scheduler: bool):
         manual_seed(0)
@@ -75,14 +79,18 @@ class Solver(object):
 
                 # Training
                 self.model.train()
-                train_epoch_loss = self.run_epoch(
+                train_epoch_loss, other_losses_train = self.run_epoch(
                     self.train_dataloader, device)
 
                 # Validation
                 self.model.eval()
-                val_epoch_loss = self.run_epoch(self.val_dataloader, device)
+                val_epoch_loss, other_losses_val = self.run_epoch(self.val_dataloader, device)
 
                 # Logging
+                for metric_name, metric_value in other_losses_val.items():
+                    writer.add_scalar(f"val {metric_name}", metric_value, epoch)
+                for metric_name, metric_value in other_losses_train.items():
+                        writer.add_scalar(f"train {metric_name}", metric_value, epoch)
                 writer.add_scalar("train_loss", train_epoch_loss, epoch)
                 writer.add_scalar("val_loss", val_epoch_loss, epoch)
                 writer.add_scalar(
@@ -92,8 +100,8 @@ class Solver(object):
                 
                 #update learning rate
                 if auto_lr_scheduler:
-                    self.scheduler.step(val_epoch_loss)
-                    new_lr = self.scheduler.get_last_lr()[0]
+                    self.lr_scheduler.step(val_epoch_loss)
+                    new_lr = self.lr_scheduler.get_last_lr()[0]
                     # Logging
                     if new_lr != last_lr and int(epoch)+1<=int(settings.epochs):
                         self.lr_schedule[int(epoch)+1] = float(new_lr)
@@ -104,13 +112,19 @@ class Solver(object):
                         "epoch": epoch,
                         "loss": val_epoch_loss,
                         "train loss": train_epoch_loss,
-                        "val RMSE": val_epoch_loss**0.5, # TODO only true if loss_func == MSELoss()
-                        "train RMSE": train_epoch_loss**0.5, #TODO only true if loss_func == MSELoss()
                         "state_dict": self.model.state_dict(),
                         "optimizer": self.opt.state_dict(),
                         "parameters": self.model.parameters(),
                         "training time in sec": (time.perf_counter() - start_time),
                     }
+                    
+                    if False:
+                        self.model.save(settings.destination, model_name=f"best_model_e{epoch}.pt")
+                        with open(Path.cwd() / "runs" / settings.destination / f"best_model_e{epoch}.yaml", "w") as f:
+                            f.write(f"epoch: {self.best_model_params['epoch']}\n")
+                            f.write(f"val_epoch_loss: {self.best_model_params['loss']}\n")
+                            f.write(f"train_epoch_loss: {self.best_model_params['train loss']}\n")
+                            f.write(f"training time in sec: {self.best_model_params['training time in sec']}\n")
 
                 if log_val_epoch:
                     if epoch in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 5000, 10000, 15000, 20000, 24999]:
@@ -165,7 +179,13 @@ class Solver(object):
 
             epoch_loss += loss.detach().item()
         epoch_loss /= len(dataloader)
-        return epoch_loss
+
+         # Calculate metrics
+        metric_values = {}
+        for metric_name, metric in self.metrics.items():
+            metric_values[metric_name] = metric(y_pred, y).detach().item()
+
+        return epoch_loss, metric_values
 
     def save_lr_schedule(self, path: str):
         """ save learning rate history to csv file"""
