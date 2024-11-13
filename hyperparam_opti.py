@@ -26,18 +26,16 @@ def objective(trial):
     # # prepare data
     # prep.preprocessing(args) # and save info.yaml in model folder
 
-    args["inputs"] = trial.suggest_categorical("input_vars", ["gksi"])
-
     # Get the dataset.
     input_channels, output_channels, dataloaders = init_data(args)
-    print("output channel")
-    print(output_channels)
-    # Generate the model.
-    depth = trial.suggest_categorical("depth", [3])
-    init_features = trial.suggest_categorical("init_features", [16])
-    kernel_size = trial.suggest_int("kernel_size", 5, 5)
-    activation = trial.suggest_categorical("activation", ["ReLU"])#, "tanh", "sigmoid"]) #practical reasoning: dont allow negative values (Leaky ReLU)
 
+    # Generate the model.
+    depth = trial.suggest_categorical("depth", [1,2,3])
+    init_features = trial.suggest_categorical("init_features", [8,16,32])
+    kernel_size = trial.suggest_categorical("kernel_size", [3,4,5])
+
+    #activation = trial.suggest_categorical("activation", ["ReLU", "tanh", "sigmoid"]) #practical reasoning: dont allow negative values (Leaky ReLU)
+    activation ="ReLU"
     if args["problem"] == "3d":
         model=UNet3d(in_channels=input_channels, out_channels=output_channels, init_features=init_features, depth=depth, kernel_size=kernel_size, activation_fct = activation).float()
     else:
@@ -47,7 +45,7 @@ def objective(trial):
 
 
     # Generate the optimizers.
-    optimizer_name = trial.suggest_categorical("optimizer", ["Adam"])#["Adam", "RMSprop", "SGD"])
+    optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop", "SGD"])
     optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=1e-4)
 
     # Training of the model.
@@ -81,7 +79,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_raw", type=str, default="dataset_giant_100hp_varyK")
     parser.add_argument("--data_prep", type=str, default=None)
     parser.add_argument("--allin1_prepro_n_case", type=str, default=None)
-    parser.add_argument("--inputs", type=str, default="pki")
+    parser.add_argument("--inputs", type=str, default="gksi")
     parser.add_argument("--outputs", type=str, default="t")
     parser.add_argument("--len_box", type=int, default=256)
     parser.add_argument("--skip_per_dir", type=int, default=32)
@@ -104,8 +102,8 @@ if __name__ == "__main__":
     #args = read_cla(args["destination"])
     #args["destination"] = current_destination # just to make sure that nothing is overwritten
     
-    study = optuna.create_study(direction="minimize", study_name="1hpnn_3d", load_if_exists=True, storage=f"sqlite:////data/scratch-simcl1/trickja/test_nn/runs/1hpnn/optuna/trials.db")
-    study.optimize(objective, n_trials=1)                                                                            
+    study = optuna.create_study(direction="minimize", study_name="opt_3d", load_if_exists=True, storage=f"sqlite:////data/scratch-simcl1/trickja/test_nn/runs/1hpnn/optuna/trials.db")
+    study.optimize(objective, n_trials=5)                                                                            
 
     pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
     complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
