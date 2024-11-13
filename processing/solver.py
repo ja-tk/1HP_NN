@@ -12,6 +12,7 @@ from torch.optim import Adam, Optimizer, lr_scheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
+from pathlib import Path
 
 # from postprocessing.visualization import visualizations
 from processing.networks.unet import UNet
@@ -102,6 +103,12 @@ class Solver(object):
 
                     if False:
                         self.model.save(args["destination"], model_name=f"best_model_e{epoch}.pt")
+                        with open(Path.cwd() / "runs" / args["destination"] / f"best_model_e{epoch}.yaml", "w") as f:
+                            f.write(f"epoch: {self.best_model_params['epoch']}\n")
+                            f.write(f"val_epoch_loss: {self.best_model_params['loss']}\n")
+                            f.write(f"train_epoch_loss: {self.best_model_params['train loss']}\n")
+                            f.write(f"training time in sec: {self.best_model_params['training time in sec']}\n")
+
                 
                 trial.report(val_epoch_loss, epoch)
 
