@@ -232,36 +232,44 @@ def plot_avg_error_cellwise(dataloader, summed_error_pic, settings_pic: dict):
     # optional: plot all zy planes
 
     info = dataloader.dataset.dataset.info
-    extent_highs = (np.array(info["CellsSize"][:2]) * (dataloader.dataset[0][0][0].shape)[-2:])
-    extent = (0,int(extent_highs[0]),int(extent_highs[1]),0)
 
     if len(summed_error_pic.shape)==3:
+        extent_highs = (np.array(info["CellsSize"][:3]) * (dataloader.dataset[0][0][0].shape)[-3:])
         summed_error_pics={}
+
         #for zy
         x_position=get_hp_position(summed_error_pic)[0]
         summed_error_pic_zy=remove_first_dim(summed_error_pic, x_position)
-        summed_error_pics["zy_slice"]=summed_error_pic_zy
+        summed_error_pics["zy_slice"]=(summed_error_pic_zy, extent_highs[1:])
 
         #mean in x-direction
         summed_error_pic_mean_zy=torch.mean(summed_error_pic,0)
-        summed_error_pics["zy_mean"]=summed_error_pic_mean_zy
+        summed_error_pics["zy_mean"]=(summed_error_pic_mean_zy, extent_highs[1:])
 
         #get all slices in x-direction
         if False:
             for x_position in range(summed_error_pic.shape[0]):
                 summed_error_pic_yz=remove_first_dim(summed_error_pic, x_position)
-                summed_error_pics[f"zy_slice_{x_position}"]=summed_error_pic_yz
+                summed_error_pics[f"zy_slice_{x_position}"]=summed_error_pic_yz, extent_highs[1:]
 
         #transpose for xy
         summed_error_pic=summed_error_pic.transpose(0,2)# (X,Y,Z) -> (Z,Y,X)   
         z_position=get_hp_position(summed_error_pic)[0]
         summed_error_pic_xy=remove_first_dim(summed_error_pic, z_position)
-        summed_error_pics["xy_slice"]=summed_error_pic_xy
+        summed_error_pics["xy_slice"]=(summed_error_pic_xy, extent_highs.T[1:])
+
+        #zx
+        y_position=get_hp_position(summed_error_pic)[1]
+        summed_error_pic=summed_error_pic.transpose(0,1)# (Z,Y,X) -> (Y,Z,X)
+        summed_error_pic_xz=remove_first_dim(summed_error_pic, y_position)
+        summed_error_pics["xz_slice"]=(summed_error_pic_xz, np.array([extent_highs[2],extent_highs[0]]))
 
     else:
-        summed_error_pics={"xy": summed_error_pic}
-       
-    for dim, tensor in summed_error_pics.items():
+        extent_highs = (np.array(info["CellsSize"][:2]) * (dataloader.dataset[0][0][0].shape)[-2:])
+        summed_error_pics={"xy": (summed_error_pic, extent_highs)}
+
+    for dim, (tensor, ex) in summed_error_pics.items():
+        extent = (0,int(ex[0]),int(ex[1]),0) 
         plt.figure()
         plt.imshow(tensor.T, cmap="RdBu_r", extent=extent)
         plt.gca().invert_yaxis()
